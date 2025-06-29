@@ -30,7 +30,7 @@ module.exports = class Application {
     }
 
     runAgent() {
-        setInterval(() => collectKubernetesMetrics(watchlogServerSocket), 10000);
+        setInterval(() => collectKubernetesMetrics(watchlogServerSocket), 60000);
     }
 
     async checkApiKey() {
