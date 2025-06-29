@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: watchlog-cluster-agent
+  namespace: default
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: watchlog-cluster-role
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "namespaces", "events", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: watchlog-cluster-agent-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: watchlog-cluster-role
+subjects:
+  - kind: ServiceAccount
+    name: watchlog-cluster-agent
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watchlog-cluster-agent
+  namespace: default
+  labels:
+    app: watchlog-cluster-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: watchlog-cluster-agent
+  template:
+    metadata:
+      labels:
+        app: watchlog-cluster-agent
+    spec:
+      serviceAccountName: watchlog-cluster-agent
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: minikube
+      containers:
+        - name: cluster-agent
+          image: watchlog-cluster-agent:latest
+          imagePullPolicy: Never
+          env:
+            - name: UUID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: WATCHLOG_APIKEY
+              value: "8ed204e18781f2c99c6e0bf101ce44d8"
+            - name: WATCHLOG_SERVER
+              value: "http://192.168.63.145:7896" # یا آدرس واقعی سرور در production
+            - name: WATCHLOG_CLUSTER_NAME
+              value: "default-cluster"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"

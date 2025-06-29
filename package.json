@@ -1,0 +1,20 @@
+{
+  "name": "watchlog-cluster-agent",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "watchlog-cluster-agent.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.3.0",
+    "app-module-path": "^2.2.0",
+    "axios": "^1.10.0",
+    "dotenv": "^16.6.0",
+    "nodemon": "^3.1.10",
+    "socket.io-client": "^4.8.1"
+  }
+}
