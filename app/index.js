@@ -6,6 +6,7 @@ const agentVersion = "0.0.1"
 
 const watchlogServerSocket = require("./socketServer");
 const { collectKubernetesMetrics } = require('./watchlog-k8s-metrics');
+const { watchPods } = require('./watchPods');  // فایل جدید
 
 module.exports = class Application {
     constructor() {
@@ -31,6 +32,12 @@ module.exports = class Application {
 
     runAgent() {
         setInterval(() => collectKubernetesMetrics(watchlogServerSocket), 60000);
+        watchPods(watchlogServerSocket, {
+            tailLines: 200,
+            sinceSeconds: 120,
+            containerName: null,
+            maxConcurrent: 3
+        });
     }
 
     async checkApiKey() {

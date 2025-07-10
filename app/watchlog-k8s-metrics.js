@@ -160,7 +160,6 @@ async function collectKubernetesMetrics(watchlogServerSocket) {
     };
 
     watchlogServerSocket.emit('kubernetesMetrics', result);
-    console.log(`✅ Sent Kubernetes metrics: ${nodeObjects.length} nodes, ${podObjects.length} pods`);
   } catch (err) {
     console.error('❌ Error collecting Kubernetes metrics:', err.message);
   }

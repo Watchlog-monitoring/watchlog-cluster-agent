@@ -1,3 +1,5 @@
+# Watchlog Cluster Agent RBAC & Deployment (local image)
+
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -11,7 +13,7 @@ metadata:
   name: watchlog-cluster-role
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "namespaces", "events", "services"]
+    resources: ["nodes", "pods", "namespaces", "events", "services", "pods/log"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
@@ -60,23 +62,23 @@ spec:
         kubernetes.io/hostname: minikube
       containers:
         - name: cluster-agent
-          image: watchlog-cluster-agent:latest
-          imagePullPolicy: Never
+          image: watchlog-cluster-agent:latest   # local image
+          imagePullPolicy: Never                  # do not pull from registry
           env:
             - name: UUID
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: WATCHLOG_APIKEY
-              value: "8ed204e18781f2c99c6e0bf101ce44d8"
+              value: "61f5e404a24dc60662757b4c86a4aea0"
             - name: WATCHLOG_SERVER
-              value: "http://192.168.63.145:7896" # یا آدرس واقعی سرور در production
+              value: "http://192.168.1.13:7896"
             - name: WATCHLOG_CLUSTER_NAME
-              value: "default-cluster"
+              value: "defaultcluster"
           resources:
             requests:
-              cpu: "200m"
+              cpu:    "200m"
               memory: "256Mi"
             limits:
-              cpu: "1"
+              cpu:    "1"
               memory: "1Gi"
