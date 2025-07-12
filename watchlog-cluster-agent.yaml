@@ -61,7 +61,7 @@ spec:
       containers:
         - name: cluster-agent
           image: watchlog/watchlog-cluster-agent:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: UUID
               valueFrom:

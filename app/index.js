@@ -31,6 +31,7 @@ module.exports = class Application {
     }
 
     runAgent() {
+        console.log("Watchlog cluster agent is running.")
         setInterval(() => collectKubernetesMetrics(watchlogServerSocket), 60000);
         watchPods(watchlogServerSocket, {
             tailLines: 200,
