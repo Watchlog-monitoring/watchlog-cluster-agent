@@ -1,6 +1,7 @@
 const fs = require('fs');
 const axios = require('axios');
 const https = require('https');
+const apiKey = process.env.WATCHLOG_APIKEY;
 
 // Collect system metrics from the host
 
@@ -153,6 +154,7 @@ async function collectKubernetesMetrics(watchlogServerSocket) {
     });
 
     const result = {
+      apiKey,
       cluster : process.env.WATCHLOG_CLUSTER_NAME ? process.env.WATCHLOG_CLUSTER_NAME : "default-cluster",
       timestamp: new Date().toISOString(),
       nodes: nodeObjects,

@@ -5,6 +5,7 @@ const fs = require('fs');
 const axios = require('axios');
 const https = require('https');
 const readline = require('readline');
+const apiKey = process.env.WATCHLOG_APIKEY;
 
 // --- Kubernetes API setup ---
 const ca = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
@@ -80,7 +81,8 @@ function watchPods(socket, opts = {}) {
             podName: nm,
             nodeName: node,
             node,
-            cluster: CLUSTER
+            cluster: CLUSTER, 
+            apiKey
           });
         }
       });
@@ -139,7 +141,7 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
   let buffer = [];
   const flush = () => {
     if (!buffer.length) return;
-    socket.emit('podLogLines', buffer);
+    socket.emit('podLogLinesArray', {logsArray : buffer, apiKey});
     buffer = [];
   };
   const intervalId = setInterval(flush, bulkInterval);
@@ -197,7 +199,8 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
         podName,
         nodeName,
         node: nodeName,
-        cluster: CLUSTER
+        cluster: CLUSTER,
+        apiKey
       });
     });
 
@@ -217,7 +220,8 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
         podName,
         nodeName,
         node: nodeName,
-        cluster: CLUSTER
+        cluster: CLUSTER, 
+        apiKey
       });
     };
 
@@ -229,7 +233,8 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
       nodeName,
       node: nodeName,
       error: err.message,
-      cluster: CLUSTER
+      cluster: CLUSTER, 
+      apiKey
     });
     return () => { };
   }
