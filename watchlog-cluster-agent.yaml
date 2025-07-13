@@ -58,6 +58,11 @@ spec:
       serviceAccountName: watchlog-cluster-agent
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+
+      # فقط روی نودی با hostname = minikube اجرا شود
+      nodeSelector:
+        kubernetes.io/hostname: minikube
+
       containers:
         - name: cluster-agent
           image: watchlog/watchlog-cluster-agent:latest
@@ -68,11 +73,11 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: WATCHLOG_APIKEY
-              value: "${apiKey.value}"
+              value: "8ed204e18781f2c99c6e0bf101ce44d8"
             - name: WATCHLOG_SERVER
-              value: "${server.value}"
+              value: "http://192.168.1.15:7896"
             - name: WATCHLOG_CLUSTER_NAME
-              value: "<CLUSTER_NAME>"
+              value: "dev"
           resources:
             requests:
               cpu:    "200m"

@@ -6,6 +6,7 @@ const axios = require('axios');
 const https = require('https');
 const readline = require('readline');
 const apiKey = process.env.WATCHLOG_APIKEY;
+const { emitWhenConnected } = require('./socketServer');
 
 // --- Kubernetes API setup ---
 const ca = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
@@ -29,16 +30,6 @@ function watchPods(socket, opts = {}) {
     }
   }
 
-  // when a stream ends, free up a slot
-  socket.on('podLogEnd', ({ namespace, podName }) => {
-    const key = `${namespace}/${podName}`;
-    const abort = active.get(key);
-    if (abort) {
-      abort();
-      active.delete(key);
-      startNext();
-    }
-  });
 
   // start watching pod events
   async function startWatch() {
@@ -76,7 +67,7 @@ function watchPods(socket, opts = {}) {
           }
           const idx = queue.findIndex(p => p.namespace === ns && p.podName === nm);
           if (idx >= 0) queue.splice(idx, 1);
-          socket.emit('podLogEnd', {
+          emitWhenConnected('podLogEnd', {
             namespace: ns,
             podName: nm,
             nodeName: node,
@@ -141,7 +132,7 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
   let buffer = [];
   const flush = () => {
     if (!buffer.length) return;
-    socket.emit('podLogLinesArray', {logsArray : buffer, apiKey});
+    emitWhenConnected('podLogLines', buffer);
     buffer = [];
   };
   const intervalId = setInterval(flush, bulkInterval);
@@ -194,13 +185,12 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
     rl.on('close', () => {
       clearInterval(intervalId);
       flush();
-      socket.emit('podLogEnd', {
+      emitWhenConnected('podLogEnd', {
         namespace,
         podName,
         nodeName,
         node: nodeName,
-        cluster: CLUSTER,
-        apiKey
+        cluster: CLUSTER
       });
     });
 
@@ -215,26 +205,24 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
       res.data.destroy();
       rl.close();
       flush();
-      socket.emit('podLogEnd', {
+      emitWhenConnected('podLogEnd', {
         namespace,
         podName,
         nodeName,
         node: nodeName,
-        cluster: CLUSTER, 
-        apiKey
+        cluster: CLUSTER
       });
     };
 
   } catch (err) {
     clearInterval(intervalId);
-    socket.emit('podLogError', {
+    emitWhenConnected('podLogError', {
       namespace,
       podName,
       nodeName,
       node: nodeName,
       error: err.message,
-      cluster: CLUSTER, 
-      apiKey
+      cluster: CLUSTER
     });
     return () => { };
   }

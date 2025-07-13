@@ -1,26 +1,37 @@
 const watchlog_server = process.env.WATCHLOG_SERVER
 var ioServer = require('socket.io-client');
-const watchlogServerSocket = ioServer.connect(watchlog_server, { reconnection: true });
-const apiKey = process.env.WATCHLOG_APIKEY;
-const clusterName = process.env.WATCHLOG_CLUSTER_NAME || "default-cluster";
-const agentVersion = "0.0.1";
 
-watchlogServerSocket.on('connect', () => {
-    console.log('Agent connected to watchlog');
-    if (apiKey) {
-        watchlogServerSocket.emit("setApiKeyK8s", {
-            apiKey,
-            clusterName,
-            agentVersion
-        });
+
+const watchlogServerSocket = ioServer.connect(watchlog_server, {
+    autoConnect: false,
+    reconnection: true, 
+    auth: {
+        apiKey: process.env.WATCHLOG_APIKEY,
+        clusterName: process.env.WATCHLOG_CLUSTER_NAME || "default-cluster",
+        agentVersion: "0.0.1"
     }
 });
 
 
-watchlogServerSocket.on('error', err => {
-    console.error('Socket.IO client error:', err);
-});
+watchlogServerSocket.connect();
 
 
 
-module.exports = watchlogServerSocket;
+watchlogServerSocket.on('error', err => console.error('client error:', err));
+watchlogServerSocket.on('connect_error', err => console.error('connect failed:', err.message));
+
+// ۴) helper برای emit ایمن
+function emitWhenConnected(event, payload) {
+    if (watchlogServerSocket.connected) {
+        watchlogServerSocket.emit(event, payload);
+    } else {
+        watchlogServerSocket.once('connect', () => {
+            watchlogServerSocket.emit(event, payload);
+        });
+    }
+}
+
+module.exports = {
+    socket: watchlogServerSocket,
+    emitWhenConnected
+};

@@ -2,10 +2,11 @@ const fs = require('fs');
 const axios = require('axios');
 const https = require('https');
 const apiKey = process.env.WATCHLOG_APIKEY;
+const { emitWhenConnected } = require('./socketServer');
 
 // Collect system metrics from the host
 
-async function collectKubernetesMetrics(watchlogServerSocket) {
+async function collectKubernetesMetrics() {
   try {
     const token = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
     const ca = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
@@ -161,7 +162,7 @@ async function collectKubernetesMetrics(watchlogServerSocket) {
       pods: podObjects,
     };
     console.log(`✅ Agent send metrics Successfully`)
-    watchlogServerSocket.emit('kubernetesMetrics', result);
+    emitWhenConnected('kubernetesMetrics', result);
   } catch (err) {
     console.error('❌ Error collecting Kubernetes metrics:', err.message);
   }
