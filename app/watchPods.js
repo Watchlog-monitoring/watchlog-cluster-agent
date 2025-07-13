@@ -1,18 +1,18 @@
 // watchPods.js
 // Kubernetes Pod Logs Watcher with bulk‐buffered socket emission, including nodeName (and alias node)
 
-const fs       = require('fs');
-const axios    = require('axios');
-const https    = require('https');
+const fs = require('fs');
+const axios = require('axios');
+const https = require('https');
 const readline = require('readline');
 
 // --- Kubernetes API setup ---
-const ca         = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
-const token      = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
+const ca = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
+const token = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
 const httpsAgent = new https.Agent({ ca });
-const headers    = { Authorization: `Bearer ${token}` };
-const baseURL    = 'https://kubernetes.default.svc';
-const CLUSTER    = process.env.WATCHLOG_CLUSTER_NAME || 'default-cluster';
+const headers = { Authorization: `Bearer ${token}` };
+const baseURL = 'https://kubernetes.default.svc';
+const CLUSTER = process.env.WATCHLOG_CLUSTER_NAME || 'default-cluster';
 
 /** 
  * Extract a simple severity level from a log message. 
@@ -34,13 +34,13 @@ function extractSeverity(message) {
  */
 async function streamPodLogs(socket, namespace, podName, opts = {}) {
   const {
-    bulkSize          = 100,
-    bulkInterval      = 10000,
-    tailLines         = 100,
-    sinceSeconds      = 60,
+    bulkSize = 100,
+    bulkInterval = 10000,
+    tailLines = 100,
+    sinceSeconds = 60,
     includeTimestamps = true,
-    containerName     = null,
-    nodeName          = null,    // nodeName passed in from watchPods()
+    containerName = null,
+    nodeName = null,    // nodeName passed in from watchPods()
   } = opts;
 
   // build the log URL
@@ -66,6 +66,10 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
       responseType: 'stream',
       timeout: 0
     });
+    res.data.on('error', err => {
+      console.error('HTTP stream error:', err.message);
+      setTimeout(startWatch, 5000);
+    });
 
     const rl = readline.createInterface({ input: res.data });
     rl.on('line', line => {
@@ -73,11 +77,11 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
 
       let ts, msg;
       if (includeTimestamps) {
-        const i  = line.indexOf(' ');
-        ts       = line.slice(0, i);
-        msg      = line.slice(i + 1);
+        const i = line.indexOf(' ');
+        ts = line.slice(0, i);
+        msg = line.slice(i + 1);
       } else {
-        ts  = new Date().toISOString();
+        ts = new Date().toISOString();
         msg = line;
       }
 
@@ -88,9 +92,9 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
         nodeName,            // explicit field
         node: nodeName,      // alias field for compatibility
         timestamp: ts,
-        message:   msg,
-        severity:  extractSeverity(msg),
-        cluster:   CLUSTER
+        message: msg,
+        severity: extractSeverity(msg),
+        cluster: CLUSTER
       });
 
       if (buffer.length >= bulkSize) {
@@ -108,6 +112,11 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
         node: nodeName,
         cluster: CLUSTER
       });
+    });
+
+    rl.on('error', err => {
+      clearInterval(intervalId);
+      console.error('StreamPodLogs readline error:', err.message);
     });
 
     // return abort function
@@ -135,7 +144,7 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
       error: err.message,
       cluster: CLUSTER
     });
-    return () => {};
+    return () => { };
   }
 }
 
@@ -145,7 +154,7 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
 function watchPods(socket, opts = {}) {
   const { maxConcurrent = 5 } = opts;
   const active = new Map(); // key "namespace/podName" -> abortFn
-  const queue  = [];        // items: { namespace, podName, nodeName }
+  const queue = [];        // items: { namespace, podName, nodeName }
 
   function startNext() {
     while (active.size < maxConcurrent && queue.length) {
@@ -184,14 +193,14 @@ function watchPods(socket, opts = {}) {
         try { evt = JSON.parse(line); } catch { return; }
 
         const { type, object: pod } = evt;
-        const ns   = pod.metadata.namespace;
-        const nm   = pod.metadata.name;
+        const ns = pod.metadata.namespace;
+        const nm = pod.metadata.name;
         const node = pod.spec.nodeName;
-        const key  = `${ns}/${nm}`;
+        const key = `${ns}/${nm}`;
 
         if (type === 'ADDED') {
           if (!active.has(key) &&
-              !queue.find(p => p.namespace === ns && p.podName === nm)) {
+            !queue.find(p => p.namespace === ns && p.podName === nm)) {
             queue.push({ namespace: ns, podName: nm, nodeName: node });
             startNext();
           }
@@ -214,6 +223,9 @@ function watchPods(socket, opts = {}) {
       });
 
       rl.on('close', () => setTimeout(startWatch, 5000));
+      rl.on('error', err => {
+        console.error('watchPods readline error:', err.message);
+      });
     } catch (err) {
       console.error('watchPods error:', err.message);
       setTimeout(startWatch, 5000);
