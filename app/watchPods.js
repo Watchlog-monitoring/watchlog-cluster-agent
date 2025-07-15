@@ -17,21 +17,29 @@ const baseURL = 'https://kubernetes.default.svc';
 const CLUSTER = process.env.WATCHLOG_CLUSTER_NAME || 'default-cluster';
 
 function watchPods(socket, opts = {}) {
-  const { maxConcurrent = 5 } = opts;
+  const { maxConcurrent = 5, reconnectDelay = 5000 } = opts;
   const active = new Map(); // key "namespace/podName" -> abortFn
   const queue = [];        // items: { namespace, podName, nodeName }
 
   function startNext() {
     while (active.size < maxConcurrent && queue.length) {
-      const { namespace, podName, nodeName } = queue.shift();
-      const key = `${namespace}/${podName}`;
-      streamPodLogs(socket, namespace, podName, { ...opts, nodeName })
-        .then(abortFn => active.set(key, abortFn));
+      const job = queue.shift();
+      const key = `${job.namespace}/${job.podName}`;
+      streamPodLogs(socket, job.namespace, job.podName, { ...opts, nodeName: job.nodeName })
+        .then(abortFn => {
+          active.set(key, abortFn);
+        })
+        .catch(err => {
+          console.error(`Failed to start log stream for ${key}:`, err.message);
+          // re-enqueue for retry
+          setTimeout(() => {
+            queue.push(job);
+            startNext();
+          }, reconnectDelay);
+        });
     }
   }
 
-
-  // start watching pod events
   async function startWatch() {
     try {
       const res = await axios.get(`${baseURL}/api/v1/pods?watch=true`, {
@@ -55,36 +63,39 @@ function watchPods(socket, opts = {}) {
 
         if (type === 'ADDED') {
           if (!active.has(key) &&
-            !queue.find(p => p.namespace === ns && p.podName === nm)) {
+              !queue.some(p => p.namespace === ns && p.podName === nm)) {
             queue.push({ namespace: ns, podName: nm, nodeName: node });
             startNext();
           }
         } else if (type === 'DELETED') {
+          // stop and cleanup
           const abort = active.get(key);
           if (abort) {
             abort();
             active.delete(key);
           }
+          // remove from queue if pending
           const idx = queue.findIndex(p => p.namespace === ns && p.podName === nm);
-          if (idx >= 0) queue.splice(idx, 1);
-          emitWhenConnected('podLogEnd', {
-            namespace: ns,
-            podName: nm,
-            nodeName: node,
-            node,
-            cluster: CLUSTER, 
-            apiKey
-          });
+          if (idx !== -1) queue.splice(idx, 1);
+
+          emitWhenConnected('podLogEnd', { namespace: ns, podName: nm, nodeName: node, cluster: CLUSTER, apiKey });
         }
       });
 
-      rl.on('close', () => setTimeout(startWatch, 5000));
       rl.on('error', err => {
         console.error('watchPods readline error:', err.message);
+        rl.close();
+        res.data.destroy();
+        setTimeout(startWatch, reconnectDelay);
+      });
+
+      rl.on('close', () => {
+        res.data.destroy();
+        setTimeout(startWatch, reconnectDelay);
       });
     } catch (err) {
       console.error('watchPods error:', err.message);
-      setTimeout(startWatch, 5000);
+      setTimeout(startWatch, reconnectDelay);
     }
   }
 
@@ -97,7 +108,7 @@ function watchPods(socket, opts = {}) {
  */
 function extractSeverity(message) {
   const p = message.match(/^\s*([IWE])\d{4}/);
-  if (p) return (p[1] === 'I' ? 'INFO' : p[1] === 'W' ? 'WARNING' : 'ERROR');
+  if (p) return p[1] === 'I' ? 'INFO' : p[1] === 'W' ? 'WARNING' : 'ERROR';
   const m = message.match(/\b(ERROR|WARN(?:ING)?|INFO|DEBUG|TRACE)\b/i);
   if (m) {
     const lvl = m[1].toUpperCase();
@@ -119,6 +130,7 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
     includeTimestamps = true,
     containerName = null,
     nodeName = null,    // nodeName passed in from watchPods()
+    reconnectDelay = 5000
   } = opts;
 
   // build the log URL
@@ -131,9 +143,10 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
 
   let buffer = [];
   const flush = () => {
-    if (!buffer.length) return;
-    emitWhenConnected('podLogLines', buffer);
-    buffer = [];
+    if (buffer.length) {
+      emitWhenConnected('podLogLines', buffer);
+      buffer = [];
+    }
   };
   const intervalId = setInterval(flush, bulkInterval);
 
@@ -144,17 +157,17 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
       responseType: 'stream',
       timeout: 0
     });
+
     res.data.on('error', err => {
       console.error('HTTP stream error:', err.message);
-      clearInterval(intervalId);
-      flush();
-      setTimeout(() => watchPods(socket, opts), 5000);
+      cleanup();
+      // retry this pod after delay
+      setTimeout(() => streamPodLogs(socket, namespace, podName, opts), reconnectDelay);
     });
 
     const rl = readline.createInterface({ input: res.data });
     rl.on('line', line => {
       if (!line.trim()) return;
-
       let ts, msg;
       if (includeTimestamps) {
         const i = line.indexOf(' ');
@@ -164,73 +177,53 @@ async function streamPodLogs(socket, namespace, podName, opts = {}) {
         ts = new Date().toISOString();
         msg = line;
       }
-
       buffer.push({
         namespace,
         podName,
         containerName,
-        nodeName,            // explicit field
-        node: nodeName,      // alias field for compatibility
+        nodeName,
+        node: nodeName,
         timestamp: ts,
         message: msg,
         severity: extractSeverity(msg),
         cluster: CLUSTER
       });
-
-      if (buffer.length >= bulkSize) {
-        flush();
-      }
-    });
-
-    rl.on('close', () => {
-      clearInterval(intervalId);
-      flush();
-      emitWhenConnected('podLogEnd', {
-        namespace,
-        podName,
-        nodeName,
-        node: nodeName,
-        cluster: CLUSTER
-      });
+      if (buffer.length >= bulkSize) flush();
     });
 
     rl.on('error', err => {
-      clearInterval(intervalId);
       console.error('StreamPodLogs readline error:', err.message);
+      cleanup();
+      setTimeout(() => streamPodLogs(socket, namespace, podName, opts), reconnectDelay);
     });
+
+    rl.on('close', () => {
+      cleanup();
+      emitWhenConnected('podLogEnd', { namespace, podName, nodeName, node: nodeName, cluster: CLUSTER });
+    });
+
+    function cleanup() {
+      clearInterval(intervalId);
+      flush();
+      try { res.data.destroy(); } catch {}
+      try { rl.close(); } catch {}
+    }
 
     // return abort function
     return () => {
-      clearInterval(intervalId);
-      res.data.destroy();
-      rl.close();
-      flush();
-      emitWhenConnected('podLogEnd', {
-        namespace,
-        podName,
-        nodeName,
-        node: nodeName,
-        cluster: CLUSTER
-      });
+      cleanup();
+      emitWhenConnected('podLogEnd', { namespace, podName, nodeName, node: nodeName, cluster: CLUSTER });
     };
 
   } catch (err) {
     clearInterval(intervalId);
-    emitWhenConnected('podLogError', {
-      namespace,
-      podName,
-      nodeName,
-      node: nodeName,
-      error: err.message,
-      cluster: CLUSTER
-    });
-    return () => { };
+    console.error(`streamPodLogs error for ${namespace}/${podName}:`, err.message);
+    emitWhenConnected('podLogError', { namespace, podName, nodeName, node: nodeName, error: err.message, cluster: CLUSTER });
+    // retry on failure
+    setTimeout(() => streamPodLogs(socket, namespace, podName, opts), reconnectDelay);
+    // return a no-op abort
+    return () => {};
   }
 }
-
-/**
- * Watch for Pod ADDED/DELETED events and manage concurrent streams.
- */
-
 
 module.exports = { watchPods, streamPodLogs };
