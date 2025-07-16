@@ -1,6 +1,6 @@
 
 const { collectKubernetesMetrics } = require('./watchlog-k8s-metrics');
-const { watchPods } = require('./watchPods');  // فایل جدید
+// const { watchPods } = require('./watchPods');  // فایل جدید
 
 module.exports = class Application {
     constructor() {
@@ -10,12 +10,12 @@ module.exports = class Application {
     runAgent() {
         console.log("Watchlog cluster agent is running.")
         setInterval(() => collectKubernetesMetrics(), 60000);
-        watchPods({
-            tailLines: 200,
-            sinceSeconds: 120,
-            containerName: null,
-            maxConcurrent: 3
-        });
+        // watchPods({
+        //     tailLines: 200,
+        //     sinceSeconds: 120,
+        //     containerName: null,
+        //     maxConcurrent: 3
+        // });
     }
 
 }
