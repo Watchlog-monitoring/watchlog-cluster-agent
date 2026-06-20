@@ -11,7 +11,9 @@ metadata:
   name: watchlog-cluster-role
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "namespaces", "events", "services", "pods/log"]
+    resources:
+      ["nodes", "pods", "namespaces", "events", "services", "endpoints",
+       "persistentvolumes", "persistentvolumeclaims", "pods/log"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
@@ -21,7 +23,16 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -75,9 +86,30 @@ spec:
             - name: WATCHLOG_APIKEY
               value: "8ed204e18781f2c99c6e0bf101ce44d8"
             - name: WATCHLOG_SERVER
-              value: "http://192.168.1.15:7896"
+              value: "http://192.168.10.164:7896"
             - name: WATCHLOG_CLUSTER_NAME
               value: "dev"
+            # --- v2 snapshot pipeline configuration ---
+            - name: K8S_COLLECTION_INTERVAL
+              value: "60000"
+            - name: K8S_COLLECT_EVENTS
+              value: "true"
+            - name: K8S_COLLECT_TOPOLOGY
+              value: "true"
+            - name: K8S_COLLECT_LOGS
+              value: "true"
+            - name: K8S_LOG_LINES
+              value: "100"
+            - name: K8S_MAX_PODS
+              value: "1000"
+            - name: K8S_MAX_EVENTS
+              value: "500"
+            - name: K8S_COMPRESSION
+              value: "true"
+            # Keep legacy `kubernetesMetrics` emit during migration; set "false"
+            # once the v2 backend read path is live.
+            - name: K8S_LEGACY_METRICS
+              value: "true"
           resources:
             requests:
               cpu:    "200m"

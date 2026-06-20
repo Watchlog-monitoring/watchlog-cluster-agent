@@ -8,7 +8,7 @@ const watchlogServerSocket = ioServer.connect(watchlog_server, {
     auth: {
         apiKey: process.env.WATCHLOG_APIKEY,
         clusterName: process.env.WATCHLOG_CLUSTER_NAME || "default-cluster",
-        agentVersion: "0.0.1"
+        agentVersion: process.env.AGENT_VERSION || "2.0.0"
     }
 });
 
