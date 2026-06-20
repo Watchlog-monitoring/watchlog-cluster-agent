@@ -15,9 +15,15 @@ rules:
       ["nodes", "pods", "namespaces", "events", "services", "endpoints",
        "persistentvolumes", "persistentvolumeclaims", "pods/log"]
     verbs: ["get", "list", "watch"]
+  # Kubelet Summary API (primary metrics source) is reached via the API server
+  # node proxy — this is what makes metrics work WITHOUT metrics-server.
+  - apiGroups: [""]
+    resources: ["nodes/proxy", "nodes/stats", "nodes/metrics"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
     verbs: ["get", "list", "watch"]
+  # Optional: only needed if K8S_ENABLE_METRICS_SERVER_FALLBACK=true.
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
     verbs: ["get", "list"]
@@ -106,10 +112,19 @@ spec:
               value: "500"
             - name: K8S_COMPRESSION
               value: "true"
-            # Keep legacy `kubernetesMetrics` emit during migration; set "false"
-            # once the v2 backend read path is live.
+            # --- runtime metrics: Kubelet Summary API (NO metrics-server needed) ---
+            - name: K8S_METRICS_SOURCE
+              value: "kubelet_summary"
+            - name: K8S_KUBELET_SUMMARY_TIMEOUT_MS
+              value: "5000"
+            - name: K8S_KUBELET_SUMMARY_CONCURRENCY
+              value: "3"
+            # metrics-server is an OPTIONAL fallback only; default OFF.
+            - name: K8S_ENABLE_METRICS_SERVER_FALLBACK
+              value: "false"
+            # Legacy `kubernetesMetrics` emit (used metrics-server) — off by default.
             - name: K8S_LEGACY_METRICS
-              value: "true"
+              value: "false"
           resources:
             requests:
               cpu:    "200m"

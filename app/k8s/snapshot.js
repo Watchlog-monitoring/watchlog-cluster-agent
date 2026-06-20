@@ -14,6 +14,8 @@ const { collectIngresses } = require('./collectors/ingresses');
 const { collectStorage } = require('./collectors/storage');
 const { collectEvents } = require('./collectors/events');
 const { collectLogs } = require('./collectors/logs');
+const { collectKubeletSummary } = require('./collectors/kubeletSummary');
+const { collectMetricsServer } = require('./collectors/metricsServerFallback');
 const { linkInventory } = require('./link');
 const { buildTopology } = require('./topology/build');
 const health = require('./health/k8sHealth');
@@ -27,6 +29,105 @@ function getConfig(env = process.env) {
     logLines: parseInt(env.K8S_LOG_LINES || '100', 10),
     maxPods: parseInt(env.K8S_MAX_PODS || '1000', 10),
     maxEvents: parseInt(env.K8S_MAX_EVENTS || '500', 10),
+    // Runtime metrics: Kubelet Summary API is the default/primary source.
+    metricsSource: env.K8S_METRICS_SOURCE || 'kubelet_summary',
+    kubeletTimeoutMs: parseInt(env.K8S_KUBELET_SUMMARY_TIMEOUT_MS || '5000', 10),
+    kubeletConcurrency: parseInt(env.K8S_KUBELET_SUMMARY_CONCURRENCY || '3', 10),
+    // metrics-server is an OPTIONAL fallback only, off by default.
+    metricsServerFallback: env.K8S_ENABLE_METRICS_SERVER_FALLBACK === 'true',
+  };
+}
+
+const nanoToCores = (n) => (n == null ? null : n / 1e9);
+
+/**
+ * Fill runtime metrics from the Kubelet Summary API (primary). For each node/pod
+ * it sets the new `metrics` object AND the legacy `usage` ({cpuCores,memoryBytes})
+ * for backward compatibility. metrics-server is consulted only to fill gaps and
+ * only when explicitly enabled. Never throws — missing metrics => null.
+ */
+async function applyRuntimeMetrics(client, inv, cfg) {
+  const nodeNames = inv.nodes.map((n) => n.name).filter(Boolean);
+  let nodeMap = {};
+  let podMap = {};
+  let stats = { success: 0, failure: 0, failedNodes: [] };
+
+  if (cfg.metricsSource !== 'none' && nodeNames.length) {
+    try {
+      const kube = await collectKubeletSummary(client, nodeNames, {
+        timeoutMs: cfg.kubeletTimeoutMs,
+        concurrency: cfg.kubeletConcurrency,
+      });
+      nodeMap = kube.nodeMetricsByName;
+      podMap = kube.podMetricsByKey;
+      stats = kube.stats;
+    } catch (err) {
+      console.warn('[k8s] kubelet summary collection failed entirely:', err.message);
+    }
+  }
+
+  // Optional metrics-server fallback (off by default) — only fills gaps.
+  let fallbackUsed = false;
+  const missingNodes = nodeNames.filter((n) => !nodeMap[n]);
+  if (cfg.metricsServerFallback && (missingNodes.length || stats.success === 0)) {
+    try {
+      const ms = await collectMetricsServer(client);
+      if (ms.available) {
+        fallbackUsed = true;
+        for (const [k, v] of Object.entries(ms.nodeMetricsByName)) if (!nodeMap[k]) nodeMap[k] = v;
+        for (const [k, v] of Object.entries(ms.podMetricsByKey)) if (!podMap[k]) podMap[k] = v;
+      }
+    } catch (err) {
+      console.warn('[k8s] metrics-server fallback failed:', err.message);
+    }
+  }
+
+  // Merge node metrics.
+  for (const node of inv.nodes) {
+    const m = nodeMap[node.name];
+    if (m) {
+      node.metrics = {
+        cpuUsageNanoCores: m.cpuUsageNanoCores,
+        memoryWorkingSetBytes: m.memoryWorkingSetBytes,
+        fsUsedBytes: m.fsUsedBytes,
+        fsCapacityBytes: m.fsCapacityBytes,
+      };
+      node.usage = {
+        cpuCores: nanoToCores(m.cpuUsageNanoCores),
+        memoryBytes: m.memoryWorkingSetBytes,
+      };
+    }
+  }
+
+  // Merge pod + container metrics.
+  for (const pod of inv.pods) {
+    const m = podMap[`${pod.namespace}/${pod.name}`];
+    if (m) {
+      pod.metrics = {
+        cpuUsageNanoCores: m.cpuUsageNanoCores,
+        memoryWorkingSetBytes: m.memoryWorkingSetBytes,
+        networkRxBytes: m.networkRxBytes,
+        networkTxBytes: m.networkTxBytes,
+      };
+      pod.usage = {
+        cpuCores: nanoToCores(m.cpuUsageNanoCores),
+        memoryBytes: m.memoryWorkingSetBytes,
+      };
+      for (const c of pod.containers || []) {
+        const cm = m.containers && m.containers[c.name];
+        if (cm) c.usage = { cpuCores: nanoToCores(cm.cpuUsageNanoCores), memoryBytes: cm.memoryWorkingSetBytes };
+      }
+    }
+  }
+
+  return {
+    source: cfg.metricsSource,
+    kubeletSuccess: stats.success,
+    kubeletFailure: stats.failure,
+    failedNodes: stats.failedNodes,
+    nodesWithoutMetrics: inv.nodes.filter((n) => !n.metrics).map((n) => n.name),
+    fallbackEnabled: cfg.metricsServerFallback,
+    fallbackUsed,
   };
 }
 
@@ -174,6 +275,20 @@ async function buildSnapshot(client, clusterName, apiKey, env = process.env, now
   };
 
   linkInventory(inv);
+
+  // Runtime metrics from the Kubelet Summary API (primary source — no
+  // metrics-server dependency). Fills node/pod/container usage + metrics.
+  const metricsInfo = await applyRuntimeMetrics(client, inv, cfg);
+  console.log(
+    `[k8s] metrics source=${metricsInfo.source} | kubelet ok=${metricsInfo.kubeletSuccess} ` +
+      `fail=${metricsInfo.kubeletFailure} | nodes without metrics=${metricsInfo.nodesWithoutMetrics.length}` +
+      (metricsInfo.nodesWithoutMetrics.length ? ` [${metricsInfo.nodesWithoutMetrics.join(', ')}]` : '') +
+      ` | metrics-server fallback=${metricsInfo.fallbackEnabled ? (metricsInfo.fallbackUsed ? 'used' : 'enabled') : 'disabled'}`
+  );
+  if (metricsInfo.kubeletFailure > 0) {
+    errors.push({ kind: 'kubelet-summary', message: `${metricsInfo.kubeletFailure} node(s) failed: ${metricsInfo.failedNodes.join(', ')}` });
+  }
+
   attachHealth(inv, cfg);
 
   // Events (optional).

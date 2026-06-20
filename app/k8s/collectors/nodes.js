@@ -15,24 +15,14 @@ function rolesFromLabels(labels = {}) {
 }
 
 async function collectNodes(client, now) {
+  // Metadata only — runtime metrics are filled later from the Kubelet Summary API.
   const { items, truncated, error } = await client.softListAll('/api/v1/nodes', {
     pageSize: 200,
   });
-  const metricsRes = await client.softListAll('/apis/metrics.k8s.io/v1beta1/nodes', {
-    pageSize: 200,
-  });
-  const usageByName = {};
-  for (const m of metricsRes.items) {
-    usageByName[m.metadata.name] = {
-      cpuCores: parseCpuCores(m.usage && m.usage.cpu),
-      memoryBytes: parseBytes(m.usage && m.usage.memory),
-    };
-  }
 
   const nodes = items.map((node) => {
     const cap = node.status.capacity || {};
     const alloc = node.status.allocatable || {};
-    const usage = usageByName[node.metadata.name] || null;
     return {
       uid: node.metadata.uid,
       kind: 'node',
@@ -67,7 +57,8 @@ async function collectNodes(client, now) {
         pods: parseIntSafe(alloc.pods),
         ephemeralStorageBytes: parseBytes(alloc['ephemeral-storage']),
       },
-      usage,
+      usage: null, // {cpuCores, memoryBytes} — filled from Kubelet Summary (back-compat)
+      metrics: null, // {cpuUsageNanoCores, memoryWorkingSetBytes, fsUsedBytes, fsCapacityBytes} — filled from Kubelet Summary
       podsRunning: 0, // filled by link step
       podsTotal: 0,
       createdAt: node.metadata.creationTimestamp,
@@ -77,14 +68,8 @@ async function collectNodes(client, now) {
 
   const errors = [];
   if (error) errors.push({ kind: 'nodes', ...error });
-  if (metricsRes.error) errors.push({ kind: 'node-metrics', ...metricsRes.error });
 
-  return {
-    nodes,
-    truncated,
-    errors,
-    metricsAvailable: !metricsRes.error,
-  };
+  return { nodes, truncated, errors };
 }
 
 module.exports = { collectNodes };

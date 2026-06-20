@@ -28,36 +28,18 @@ function pvcNamesFromVolumes(pod) {
 }
 
 async function collectPods(client, now, maxPods) {
+  // Metadata only — runtime metrics are filled later from the Kubelet Summary API.
   const { items, truncated, error } = await client.softListAll('/api/v1/pods', {
     pageSize: 500,
     maxItems: maxPods,
   });
-  const metricsRes = await client.softListAll('/apis/metrics.k8s.io/v1beta1/pods', {
-    pageSize: 500,
-  });
-  const usageByKey = {};
-  for (const pm of metricsRes.items) {
-    const key = `${pm.metadata.namespace}/${pm.metadata.name}`;
-    const containers = {};
-    for (const c of pm.containers || []) {
-      containers[c.name] = {
-        cpuCores: parseCpuCores(c.usage && c.usage.cpu),
-        memoryBytes: parseBytes(c.usage && c.usage.memory),
-      };
-    }
-    usageByKey[key] = containers;
-  }
 
   const pods = items.map((pod) => {
-    const key = `${pod.metadata.namespace}/${pod.metadata.name}`;
     const specMap = containerSpecMap(pod);
     const statusMap = containerStatusMap(pod);
-    const usageMap = usageByKey[key] || {};
-    const metricsAvailable = !metricsRes.error && usageByKey[key] !== undefined;
 
     const containers = ((pod.spec && pod.spec.containers) || []).map((c) => {
       const st = statusMap[c.name] || {};
-      const usage = usageMap[c.name] || null;
       const state = st.state || {};
       let stateName = 'unknown';
       let waitingReason = null;
@@ -75,18 +57,11 @@ async function collectPods(client, now, maxPods) {
         waitingReason,
         lastTerminatedReason:
           st.lastState && st.lastState.terminated && st.lastState.terminated.reason,
-        usage,
+        usage: null, // {cpuCores, memoryBytes} — filled from Kubelet Summary
         requests: { cpuCores: parseCpuCores(req.cpu), memoryBytes: parseBytes(req.memory) },
         limits: { cpuCores: parseCpuCores(lim.cpu), memoryBytes: parseBytes(lim.memory) },
       };
     });
-
-    const usageTotal = metricsAvailable
-      ? {
-          cpuCores: sumNullable(containers.map((c) => c.usage && c.usage.cpuCores)),
-          memoryBytes: sumNullable(containers.map((c) => c.usage && c.usage.memoryBytes)),
-        }
-      : null;
 
     const statuses = (pod.status && pod.status.containerStatuses) || [];
     return {
@@ -118,7 +93,8 @@ async function collectPods(client, now, maxPods) {
       restarts: statuses.reduce((s, c) => s + (c.restartCount || 0), 0),
       containers,
       volumes: pvcNamesFromVolumes(pod),
-      usage: usageTotal,
+      usage: null, // {cpuCores, memoryBytes} — filled from Kubelet Summary (back-compat)
+      metrics: null, // {cpuUsageNanoCores, memoryWorkingSetBytes, networkRxBytes, networkTxBytes}
       requests: {
         cpuCores: sumNullable(containers.map((c) => c.requests.cpuCores)),
         memoryBytes: sumNullable(containers.map((c) => c.requests.memoryBytes)),
@@ -134,14 +110,8 @@ async function collectPods(client, now, maxPods) {
 
   const errors = [];
   if (error) errors.push({ kind: 'pods', ...error });
-  if (metricsRes.error) errors.push({ kind: 'pod-metrics', ...metricsRes.error });
 
-  return {
-    pods,
-    truncated,
-    errors,
-    metricsAvailable: !metricsRes.error,
-  };
+  return { pods, truncated, errors };
 }
 
 module.exports = { collectPods };
