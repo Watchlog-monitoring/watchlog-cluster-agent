@@ -88,14 +88,14 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: WATCHLOG_APIKEY
-              value: "WATCHLOG_APIKEY_GOES_HERE"
+              value: "8ed204e18781f2c99c6e0bf101ce44d8"
             # Stable host address from inside minikube — survives Mac LAN IP/DHCP
             # changes, so you never have to edit this again for local testing.
             # (For a real remote server, replace with its public URL.)
             - name: WATCHLOG_SERVER
-              value: "WATCHLOG_SERVER_GOES_HERE"
+              value: "http://host.minikube.internal:7896"
             - name: WATCHLOG_CLUSTER_NAME
-              value: "CLUSTER_Name_GOES_HERE"
+              value: "minikube"
             # --- v2 snapshot pipeline configuration ---
             - name: K8S_COLLECTION_INTERVAL
               value: "60000"
