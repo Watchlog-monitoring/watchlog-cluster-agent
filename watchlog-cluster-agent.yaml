@@ -16,7 +16,7 @@ rules:
        "persistentvolumes", "persistentvolumeclaims", "pods/log"]
     verbs: ["get", "list", "watch"]
   # Kubelet Summary API (primary metrics source) is reached via the API server
-  # node proxy — this is what makes metrics work WITHOUT metrics-server.
+  # node proxy - this is what makes metrics work WITHOUT metrics-server.
   - apiGroups: [""]
     resources: ["nodes/proxy", "nodes/stats", "nodes/metrics"]
     verbs: ["get"]
@@ -76,25 +76,26 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
 
-      # فقط روی نودی با hostname = minikube اجرا شود
-      nodeSelector:
-        kubernetes.io/hostname: minikube
-
       containers:
         - name: cluster-agent
           image: watchlog/watchlog-cluster-agent:latest
-          imagePullPolicy: Always
+          # IfNotPresent so a locally-built image (minikube image build) is used
+          # for testing. Use Always when pulling a published image from a registry.
+          imagePullPolicy: IfNotPresent
           env:
             - name: UUID
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
             - name: WATCHLOG_APIKEY
-              value: "8ed204e18781f2c99c6e0bf101ce44d8"
+              value: "WATCHLOG_APIKEY_GOES_HERE"
+            # Stable host address from inside minikube — survives Mac LAN IP/DHCP
+            # changes, so you never have to edit this again for local testing.
+            # (For a real remote server, replace with its public URL.)
             - name: WATCHLOG_SERVER
-              value: "http://192.168.10.164:7896"
+              value: "WATCHLOG_SERVER_GOES_HERE"
             - name: WATCHLOG_CLUSTER_NAME
-              value: "dev"
+              value: "CLUSTER_Name_GOES_HERE"
             # --- v2 snapshot pipeline configuration ---
             - name: K8S_COLLECTION_INTERVAL
               value: "60000"
@@ -103,13 +104,17 @@ spec:
             - name: K8S_COLLECT_TOPOLOGY
               value: "true"
             - name: K8S_COLLECT_LOGS
-              value: "true"
+              value: "false"
             - name: K8S_LOG_LINES
               value: "100"
             - name: K8S_MAX_PODS
               value: "1000"
             - name: K8S_MAX_EVENTS
               value: "500"
+            # A pod is "warning" only if it restarted within this many minutes
+            # (recency window) — old restarts no longer flag a healthy pod.
+            - name: K8S_RESTART_WINDOW_MIN
+              value: "30"
             - name: K8S_COMPRESSION
               value: "true"
             # --- runtime metrics: Kubelet Summary API (NO metrics-server needed) ---
@@ -122,7 +127,7 @@ spec:
             # metrics-server is an OPTIONAL fallback only; default OFF.
             - name: K8S_ENABLE_METRICS_SERVER_FALLBACK
               value: "false"
-            # Legacy `kubernetesMetrics` emit (used metrics-server) — off by default.
+            # Legacy `kubernetesMetrics` emit (used metrics-server) - off by default.
             - name: K8S_LEGACY_METRICS
               value: "false"
           resources:

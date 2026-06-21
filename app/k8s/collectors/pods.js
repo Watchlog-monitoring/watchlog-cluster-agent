@@ -57,11 +57,24 @@ async function collectPods(client, now, maxPods) {
         waitingReason,
         lastTerminatedReason:
           st.lastState && st.lastState.terminated && st.lastState.terminated.reason,
+        // timing used to decide if a restart is RECENT (windowed), not lifetime
+        startedAt: (state.running && state.running.startedAt) || null,
+        lastTerminatedAt:
+          (st.lastState && st.lastState.terminated && st.lastState.terminated.finishedAt) || null,
         usage: null, // {cpuCores, memoryBytes} — filled from Kubelet Summary
         requests: { cpuCores: parseCpuCores(req.cpu), memoryBytes: parseBytes(req.memory) },
         limits: { cpuCores: parseCpuCores(lim.cpu), memoryBytes: parseBytes(lim.memory) },
       };
     });
+
+    // Most recent restart moment across containers (for windowed health).
+    let lastRestartAt = null;
+    for (const c of containers) {
+      if ((c.restartCount || 0) > 0) {
+        const t = c.lastTerminatedAt || c.startedAt;
+        if (t && (!lastRestartAt || new Date(t) > new Date(lastRestartAt))) lastRestartAt = t;
+      }
+    }
 
     const statuses = (pod.status && pod.status.containerStatuses) || [];
     return {
@@ -91,6 +104,7 @@ async function collectPods(client, now, maxPods) {
       readyContainers: statuses.filter((c) => c.ready).length,
       totalContainers: statuses.length || containers.length,
       restarts: statuses.reduce((s, c) => s + (c.restartCount || 0), 0),
+      lastRestartAt, // most recent restart moment (for windowed health)
       containers,
       volumes: pvcNamesFromVolumes(pod),
       usage: null, // {cpuCores, memoryBytes} — filled from Kubelet Summary (back-compat)

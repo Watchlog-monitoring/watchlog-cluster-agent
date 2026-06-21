@@ -12,8 +12,11 @@
  */
 
 const DEFAULT_CONFIG = {
-  restartWarn: 5, // pod restarts >= this -> warning
-  restartCrit: 20, // pod restarts >= this -> critical
+  // Restarts are judged by RECENCY, not lifetime total: a pod that restarted
+  // hours ago and has been stable since is healthy. "Recent" = within the window.
+  restartWindowMin: 30, // a restart within this many minutes -> warning
+  restartCritWindow: 3, // >= this many restarts AND within window -> critical (crash spiral)
+  restartWarn: 5, // (legacy) lifetime fallback when no restart timestamp is available
 };
 
 // Container waiting reasons that indicate a hard failure.
@@ -34,7 +37,8 @@ function result(health, reason, signals = []) {
 }
 
 // --- Pod ---------------------------------------------------------------------
-function evaluatePod(pod, cfg = DEFAULT_CONFIG) {
+function evaluatePod(pod, cfg = DEFAULT_CONFIG, now = new Date()) {
+  const c0 = { ...DEFAULT_CONFIG, ...(cfg || {}) };
   const signals = [];
   const phase = pod.phase;
 
@@ -51,23 +55,30 @@ function evaluatePod(pod, cfg = DEFAULT_CONFIG) {
 
   if (phase === 'Failed') return result(H.CRITICAL, 'Failed', ['pod phase Failed']);
   if (phase === 'Unknown' || !phase) return result(H.UNKNOWN, 'Unknown', ['pod phase unknown']);
-
-  const restarts = pod.restarts || 0;
-  if (restarts >= cfg.restartCrit) {
-    return result(H.CRITICAL, 'HighRestarts', [`${restarts} restarts`]);
-  }
-
   if (phase === 'Succeeded') return result(H.HEALTHY, 'Completed', ['pod Succeeded']);
-
   if (phase === 'Pending') {
     signals.push('pod Pending');
     return result(H.WARNING, 'Pending', signals);
   }
 
-  // Running
-  if (restarts >= cfg.restartWarn) {
+  // Running: judge restarts by RECENCY (within the window), not lifetime total.
+  const restarts = pod.restarts || 0;
+  const windowMs = (c0.restartWindowMin || 30) * 60000;
+  if (pod.lastRestartAt) {
+    const ageMs = now - new Date(pod.lastRestartAt);
+    if (ageMs >= 0 && ageMs <= windowMs) {
+      const mins = Math.max(1, Math.round(ageMs / 60000));
+      if (restarts >= (c0.restartCritWindow || 3)) {
+        return result(H.CRITICAL, 'CrashLooping', [`${restarts} restarts, last ${mins}m ago`]);
+      }
+      return result(H.WARNING, 'RecentRestart', [`restarted ${mins}m ago (${restarts} total)`]);
+    }
+    // restarted, but long ago and stable since → not a current problem
+  } else if (restarts >= c0.restartWarn) {
+    // no restart timestamp available → conservative lifetime fallback
     return result(H.WARNING, 'Restarts', [`${restarts} restarts`]);
   }
+
   if (pod.totalContainers && pod.readyContainers < pod.totalContainers) {
     return result(H.WARNING, 'NotAllReady', [
       `${pod.readyContainers}/${pod.totalContainers} containers ready`,

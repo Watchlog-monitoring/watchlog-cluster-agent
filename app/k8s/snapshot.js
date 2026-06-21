@@ -29,6 +29,7 @@ function getConfig(env = process.env) {
     logLines: parseInt(env.K8S_LOG_LINES || '100', 10),
     maxPods: parseInt(env.K8S_MAX_PODS || '1000', 10),
     maxEvents: parseInt(env.K8S_MAX_EVENTS || '500', 10),
+    restartWindowMin: parseInt(env.K8S_RESTART_WINDOW_MIN || '30', 10),
     // Runtime metrics: Kubelet Summary API is the default/primary source.
     metricsSource: env.K8S_METRICS_SOURCE || 'kubelet_summary',
     kubeletTimeoutMs: parseInt(env.K8S_KUBELET_SUMMARY_TIMEOUT_MS || '5000', 10),
@@ -147,8 +148,8 @@ function deriveClusterId(clusterName, namespaces) {
   return `${clusterName}:${suffix}`;
 }
 
-function attachHealth(inv, cfg) {
-  for (const p of inv.pods) Object.assign(p, health.evaluatePod(p));
+function attachHealth(inv, cfg, now = new Date()) {
+  for (const p of inv.pods) Object.assign(p, health.evaluatePod(p, cfg, now));
   for (const n of inv.nodes) Object.assign(n, health.evaluateNode(n));
   const wl = inv.workloads;
   for (const d of wl.deployments) Object.assign(d, health.evaluateWorkload(d));
@@ -289,7 +290,7 @@ async function buildSnapshot(client, clusterName, apiKey, env = process.env, now
     errors.push({ kind: 'kubelet-summary', message: `${metricsInfo.kubeletFailure} node(s) failed: ${metricsInfo.failedNodes.join(', ')}` });
   }
 
-  attachHealth(inv, cfg);
+  attachHealth(inv, cfg, now);
 
   // Events (optional).
   let events = [];

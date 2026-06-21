@@ -45,7 +45,12 @@ function toNode(type, r, parentId) {
     status: r.status != null ? r.status : r.phase || null,
     health: r.health || 'unknown',
     labels: r.labels || {},
-    metrics: r.metrics || (r.usage ? { ...r.usage } : {}),
+    uid: r.uid || null,
+    reason: r.reason || null, // health reason ("why") so the UI can explain the state
+    metrics: {
+      ...(r.metrics || (r.usage ? { ...r.usage } : {})),
+      ...(r.restarts != null ? { restarts: r.restarts } : {}),
+    },
     // carry identifiers the UI needs to deep-link (e.g. pod -> NodeDetails/PodDetails)
     metadata: {
       ...(r.topoMeta || {}),

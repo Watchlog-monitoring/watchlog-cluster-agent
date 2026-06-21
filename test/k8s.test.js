@@ -38,15 +38,23 @@ test('pod health: CrashLoopBackOff is critical', () => {
   assert.strictEqual(r.reason, 'CrashLoopBackOff');
 });
 
-test('pod health: high restarts warns, very high is critical', () => {
+test('pod health: restarts judged by recency window, not lifetime total', () => {
   const cfg = health.DEFAULT_CONFIG;
+  const now = new Date('2026-06-21T12:00:00Z');
+  // restarted just now -> warning
   assert.strictEqual(
-    health.evaluatePod({ phase: 'Running', restarts: 6, readyContainers: 1, totalContainers: 1, containers: [] }, cfg).health,
+    health.evaluatePod({ phase: 'Running', restarts: 1, lastRestartAt: '2026-06-21T11:55:00Z', readyContainers: 1, totalContainers: 1, containers: [] }, cfg, now).health,
     'warning'
   );
+  // several restarts within the window -> critical (crash spiral)
   assert.strictEqual(
-    health.evaluatePod({ phase: 'Running', restarts: 50, containers: [] }, cfg).health,
+    health.evaluatePod({ phase: 'Running', restarts: 5, lastRestartAt: '2026-06-21T11:50:00Z', containers: [] }, cfg, now).health,
     'critical'
+  );
+  // many lifetime restarts but last one hours ago, stable since -> healthy
+  assert.strictEqual(
+    health.evaluatePod({ phase: 'Running', restarts: 50, lastRestartAt: '2026-06-21T06:00:00Z', readyContainers: 1, totalContainers: 1, containers: [] }, cfg, now).health,
+    'healthy'
   );
 });
 
